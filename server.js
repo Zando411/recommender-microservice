@@ -18,25 +18,27 @@ async function fetchUserPreferences(userID) {
   const response = await axios.get(
     `${PREFERENCES_SERVICE_URL}/api/preferences/${userID}`
   );
-  return response.data;
+  return response;
 }
 
 function buildQueryParams(passedPreferences) {
   let preferences = passedPreferences.data;
   console.log('Preferences:', preferences);
   let query = {};
-  if (preferences.location && preferences.radius) {
+  if (preferences.location) {
     query.lat = preferences.location.latitude;
     query.lon = preferences.location.longitude;
-    query.radius = preferences.radius; // in miles
+    query.radius = preferences.radius || 50; // in miles
   }
 
   if (preferences.color != null) {
     query.color = preferences.color;
   }
-  if (preferences.age) {
-    query.minAge = preferences.age.minAge;
-    query.maxAge = preferences.age.maxAge;
+  if (preferences.minAge) {
+    query.minAge = preferences.minAge;
+  }
+  if (preferences.maxAge) {
+    query.maxAge = preferences.maxAge;
   }
   if (preferences.sex) {
     query.sex = preferences.sex;
@@ -48,17 +50,15 @@ function buildQueryParams(passedPreferences) {
   return query;
 }
 
-async function fetchCats(preferences) {
+async function fetchCats(query) {
   try {
-    const query = buildQueryParams(preferences);
-    console.log('Query:', query);
     const response = await axios.get(`${CAT_DATABASE_URL}/api/cats`, {
       params: query,
     });
-    console.log('Cats:', response);
+    console.log('Cats:', response.data);
     return response.data.cats;
   } catch (error) {
-    console.error('Error fetching cats:', error);
+    console.error('Error fetching cats:', error.data);
     return [];
   }
 }
@@ -74,23 +74,29 @@ app.get('/api/recommend', async (req, res) => {
     // fetch preferences
     const preferences = await fetchUserPreferences(userID);
 
+    let query = buildQueryParams(preferences);
+
+    console.log('Query:', query);
     // initial cat database API call
-    let cats = await fetchCats(preferences);
+    let cats = await fetchCats(query);
 
     // if too few cats meet params
     if (cats.length < 2) {
-      let query = {};
-      query.lat = preferences.location.latitude;
-      query.lon = preferences.location.longitude;
-      query.radius = preferences.radius;
-      cats = (await axios.get(CAT_DATABASE_URL, { params: query })).data.cats;
+      let relaxedPreferences = {
+        ...preferences,
+        color: null,
+        sex: null,
+      };
+      let relaxedQuery = buildQueryParams(relaxedPreferences);
+      console.log('Relaxed Query:', relaxedQuery);
+      cats = await fetchCats(relaxedQuery);
     }
 
     const topCats = cats.slice(0, 5);
     // return cats
-    res.json(topCats);
+    res.json({ recommendedCats: topCats });
   } catch (e) {
-    console.error(e);
+    console.error(e.response);
     res.status(500).json({ error: 'Error getting recommendations' });
   }
 });
