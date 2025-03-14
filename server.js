@@ -50,12 +50,32 @@ function buildQueryParams(passedPreferences) {
   return query;
 }
 
+function scoreCat(cat, preferences) {
+  let matchCount = 0;
+  if (preferences.data.color && cat.color === preferences.data.color) {
+    matchCount++;
+  }
+  if (preferences.data.sex && cat.sex === preferences.data.sex) {
+    matchCount++;
+  }
+  if (preferences.data.breed && cat.breed === preferences.data.breed) {
+    matchCount++;
+  }
+  if (preferences.data.minAge && cat.age >= preferences.data.minAge) {
+    matchCount++;
+  }
+  if (preferences.data.maxAge && cat.age <= preferences.data.maxAge) {
+    matchCount++;
+  }
+  return matchCount;
+}
+
 async function fetchCats(query) {
   try {
     const response = await axios.get(`${CAT_DATABASE_URL}/api/cats`, {
-      params: query,
+      params: { ...query },
     });
-    console.log('Cats:', response.data);
+    console.log('Cats:', response.data.cats);
     return response.data.cats;
   } catch (error) {
     console.error('Error fetching cats:', error.data);
@@ -64,7 +84,7 @@ async function fetchCats(query) {
 }
 
 app.get('/api/recommend', async (req, res) => {
-  const { userID } = req.query;
+  const { userID, page = 1, limit = 5 } = req.query;
 
   if (!userID) {
     return res.status(400).json({ error: 'Missing userID' });
@@ -73,30 +93,47 @@ app.get('/api/recommend', async (req, res) => {
   try {
     // fetch preferences
     const preferences = await fetchUserPreferences(userID);
-
     let query = buildQueryParams(preferences);
 
-    console.log('Query:', query);
+    //track retrieved cats
+    let seenCatIDs = new Set();
+    let allCats = [];
+
     // initial cat database API call
-    let cats = await fetchCats(query);
+    let exactMatches = await fetchCats(query, page, limit);
 
-    // if too few cats meet params
-    if (cats.length < 2) {
-      let relaxedPreferences = {
-        ...preferences,
-        color: null,
-        sex: null,
-      };
-      let relaxedQuery = buildQueryParams(relaxedPreferences);
-      console.log('Relaxed Query:', relaxedQuery);
-      cats = await fetchCats(relaxedQuery);
-    }
+    // add cats only if they match 2 or more preferences
+    exactMatches = exactMatches.filter((cat) => {
+      let matchCount = scoreCat(cat, preferences);
+      return matchCount >= 2;
+    });
 
-    const topCats = cats.slice(0, 5);
+    // add cats to seenCatIDs
+    exactMatches.forEach((cat) => seenCatIDs.add(cat._id));
+    allCats.push(...exactMatches);
+
+    // get partial matches
+    let partialMatches = await fetchCats(query);
+    partialMatches = partialMatches.filter((cat) => {
+      let matchCount = scoreCat(cat, preferences);
+      return matchCount === 1 && !seenCatIDs.has(cat._id);
+    });
+
+    // add partial matches to seenCatIDs
+    partialMatches.forEach((cat) => seenCatIDs.add(cat._id));
+    allCats.push(...partialMatches);
+
+    // get remaining cats
+    let remainingCats = await fetchCats({});
+    remainingCats = remainingCats.filter((cat) => !seenCatIDs.has(cat._id));
+
+    // add remaining cats to seenCatIDs
+    allCats.push(...remainingCats);
+
     // return cats
-    res.json({ recommendedCats: topCats });
+    res.json({ recommendedCats: allCats });
   } catch (e) {
-    console.error(e.response);
+    console.error(e);
     res.status(500).json({ error: 'Error getting recommendations' });
   }
 });
