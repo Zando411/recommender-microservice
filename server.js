@@ -21,50 +21,53 @@ async function fetchUserPreferences(userID) {
   return response;
 }
 
-function buildQueryParams(passedPreferences) {
-  let preferences = passedPreferences.data;
+function buildQueryParams(preferences) {
   console.log('Preferences:', preferences);
   let query = {};
+
   if (preferences.location) {
     query.lat = preferences.location.latitude;
     query.lon = preferences.location.longitude;
     query.radius = preferences.radius || 50; // in miles
   }
 
-  if (preferences.color != null) {
-    query.color = preferences.color;
+  if (preferences.strict) {
+    if (preferences.color != null) {
+      query.color = preferences.color;
+    }
+    if (preferences.minAge) {
+      query.minAge = preferences.minAge;
+    }
+    if (preferences.maxAge) {
+      query.maxAge = preferences.maxAge;
+    }
+    if (preferences.sex) {
+      query.sex = preferences.sex;
+    }
+    if (preferences.breed) {
+      query.breed = preferences.breed;
+    }
   }
-  if (preferences.minAge) {
-    query.minAge = preferences.minAge;
-  }
-  if (preferences.maxAge) {
-    query.maxAge = preferences.maxAge;
-  }
-  if (preferences.sex) {
-    query.sex = preferences.sex;
-  }
-  if (preferences.breed) {
-    query.breed = preferences.breed;
-  }
+  
 
   return query;
 }
 
 function scoreCat(cat, preferences) {
   let matchCount = 0;
-  if (preferences.data.color && cat.color === preferences.data.color) {
+  if (preferences.color && cat.color === preferences.color) {
     matchCount++;
   }
-  if (preferences.data.sex && cat.sex === preferences.data.sex) {
+  if (preferences.sex && cat.sex === preferences.sex) {
     matchCount++;
   }
-  if (preferences.data.breed && cat.breed === preferences.data.breed) {
+  if (preferences.breed && cat.breed === preferences.breed) {
     matchCount++;
   }
-  if (preferences.data.minAge && cat.age >= preferences.data.minAge) {
+  if (preferences.minAge && cat.age >= preferences.minAge) {
     matchCount++;
   }
-  if (preferences.data.maxAge && cat.age <= preferences.data.maxAge) {
+  if (preferences.maxAge && cat.age <= preferences.maxAge) {
     matchCount++;
   }
   return matchCount;
@@ -75,8 +78,8 @@ async function fetchCats(query) {
     const response = await axios.get(`${CAT_DATABASE_URL}/api/cats`, {
       params: { ...query },
     });
-    console.log('Cats:', response.data.cats);
-    return response.data.cats;
+    // console.log('Cats:', response.data.cats);
+    return response.data.cats || [];
   } catch (error) {
     console.error('Error fetching cats:', error.data);
     return [];
@@ -84,7 +87,7 @@ async function fetchCats(query) {
 }
 
 app.get('/api/recommend', async (req, res) => {
-  const { userID, page = 1, limit = 5 } = req.query;
+  const { userID } = req.query;
 
   if (!userID) {
     return res.status(400).json({ error: 'Missing userID' });
@@ -92,46 +95,31 @@ app.get('/api/recommend', async (req, res) => {
 
   try {
     // fetch preferences
-    const preferences = await fetchUserPreferences(userID);
+    const preferencesResponse = await fetchUserPreferences(userID);
+    const preferences = preferencesResponse.data; 
+    const strictMode = preferences.strict;
+
+    // build query params
     let query = buildQueryParams(preferences);
 
-    //track retrieved cats
-    let seenCatIDs = new Set();
-    let allCats = [];
+    // fetch cats
+    const cats = await fetchCats(query);
 
-    // initial cat database API call
-    let exactMatches = await fetchCats(query, page, limit);
+    let recommendedCats;
 
-    // add cats only if they match 2 or more preferences
-    exactMatches = exactMatches.filter((cat) => {
-      let matchCount = scoreCat(cat, preferences);
-      return matchCount >= 2;
-    });
-
-    // add cats to seenCatIDs
-    exactMatches.forEach((cat) => seenCatIDs.add(cat._id));
-    allCats.push(...exactMatches);
-
-    // get partial matches
-    let partialMatches = await fetchCats(query);
-    partialMatches = partialMatches.filter((cat) => {
-      let matchCount = scoreCat(cat, preferences);
-      return matchCount === 1 && !seenCatIDs.has(cat._id);
-    });
-
-    // add partial matches to seenCatIDs
-    partialMatches.forEach((cat) => seenCatIDs.add(cat._id));
-    allCats.push(...partialMatches);
-
-    // get remaining cats
-    let remainingCats = await fetchCats({});
-    remainingCats = remainingCats.filter((cat) => !seenCatIDs.has(cat._id));
-
-    // add remaining cats to seenCatIDs
-    allCats.push(...remainingCats);
-
+    if (strictMode) {
+      recommendedCats = cats;
+    } else {
+      recommendedCats = cats.map((cat) => {
+        return { ...cat, catScore: scoreCat(cat, preferences) };
+      }).sort((a, b) => {
+        return b.catScore - a.catScore;
+      });
+    }
+    
+    console.log('Scored Cats:', recommendedCats);
     // return cats
-    res.json({ recommendedCats: allCats });
+    res.json({ recommendedCats: recommendedCats });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error getting recommendations' });
