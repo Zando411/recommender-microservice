@@ -9,6 +9,7 @@ const PORT = process.env.PORT || 3000;
 
 //URLs for microservices
 const PREFERENCES_SERVICE_URL = process.env.PREFERENCES_SERVICE_URL;
+const FAVORITES_SERVICE_URL = process.env.FAVORITES_SERVICE_URL;
 const CAT_DATABASE_URL = process.env.CAT_DATABASE_URL;
 
 app.use(cors());
@@ -48,7 +49,6 @@ function buildQueryParams(preferences) {
       query.breed = preferences.breed;
     }
   }
-  
 
   return query;
 }
@@ -96,8 +96,15 @@ app.get('/api/recommend', async (req, res) => {
   try {
     // fetch preferences
     const preferencesResponse = await fetchUserPreferences(userID);
-    const preferences = preferencesResponse.data; 
+    const preferences = preferencesResponse.data;
     const strictMode = preferences.strict;
+
+    // fetch favorites
+    const favoritesResponse = await axios.get(
+      `${FAVORITES_SERVICE_URL}/api/favorites/${userID}`
+    );
+    const favorites = favoritesResponse.data.favorites;
+    console.log('Favorites:', favorites);
 
     // build query params
     let query = buildQueryParams(preferences);
@@ -105,18 +112,25 @@ app.get('/api/recommend', async (req, res) => {
     // fetch cats
     const cats = await fetchCats(query);
 
+    // filter out favorites
+    const filteredCats = cats.filter((cat) => {
+      return !favorites.includes(cat._id);
+    });
+
     let recommendedCats;
 
     if (strictMode) {
-      recommendedCats = cats;
+      recommendedCats = filteredCats;
     } else {
-      recommendedCats = cats.map((cat) => {
-        return { ...cat, catScore: scoreCat(cat, preferences) };
-      }).sort((a, b) => {
-        return b.catScore - a.catScore;
-      });
+      recommendedCats = filteredCats
+        .map((cat) => {
+          return { ...cat, catScore: scoreCat(cat, preferences) };
+        })
+        .sort((a, b) => {
+          return b.catScore - a.catScore;
+        });
     }
-    
+
     console.log('Scored Cats:', recommendedCats);
     // return cats
     res.json({ recommendedCats: recommendedCats });
