@@ -103,8 +103,8 @@ app.get('/api/recommend', async (req, res) => {
     const favoritesResponse = await axios.get(
       `${FAVORITES_SERVICE_URL}/api/favorites/${userID}`
     );
-    const favorites = favoritesResponse.data.favorites;
-    console.log('Favorites:', favorites);
+    const favorites = favoritesResponse.data.favorites || [];
+    
 
     // build query params
     let query = buildQueryParams(preferences);
